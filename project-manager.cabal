@@ -54,6 +54,7 @@ executable hsdhall
 
   -- Modules included in this executable, other than Main.
   other-modules:       Project
+                     , ProjectTree
 
   default-extensions:  OverloadedStrings
                      , TupleSections
@@ -91,6 +92,9 @@ executable hsdhall
   build-depends:       base ==4.12.*
                      , relude ==0.4.*
                      , dhall == 1.19.*
+                     , template-haskell == 2.14.*
+                     , containers == 0.6.*
+                     , prettyprinter == 1.2.*
 
   -- Directories containing source files.
   hs-source-dirs:      src
