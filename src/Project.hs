@@ -75,7 +75,7 @@ instance ToDhall Project where
     dhallType _ = Record $ fromList $ fmap (\(name,Inj _ tp) -> (name,tp)) injectProject 
     toDhall = convertRecordType injectProject
 
-readProject :: FilePath -> IO (Maybe Project)
+readProject :: FilePath -> IO Project
 readProject = readFileText >=> input auto
 
 writeProject :: FilePath -> Project -> IO ()

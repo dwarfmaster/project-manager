@@ -95,6 +95,8 @@ executable hsdhall
                      , template-haskell == 2.14.*
                      , containers == 0.6.*
                      , prettyprinter == 1.2.*
+                     , directory == 1.3.*
+                     , filepath == 1.4.*
 
   -- Directories containing source files.
   hs-source-dirs:      src
