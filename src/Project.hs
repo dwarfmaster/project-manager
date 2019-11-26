@@ -22,7 +22,7 @@ instance ToDhall Text where
     toDhall = TextLit . Chunks []
 instance ToDhall a => ToDhall [a] where
     dhallType _ = App List $ dhallType (Proxy @a)
-    toDhall [] = ListLit (Just $ dhallType (Proxy @[a])) []
+    toDhall [] = ListLit (Just $ dhallType (Proxy @a)) []
     toDhall ls = ListLit Nothing $ fromList $ fmap toDhall ls
 
 data Injection a = Inj (a -> Expr Void Void) (Expr Void Void)
@@ -48,7 +48,7 @@ injectRepository = Mp.fromList
                            , ("user", mkInj user)
                            , ("name", mkInj (name :: Repository -> Text))
                            ])
-                 , ("Other", [ ("other", mkInj command) ])
+                 , ("Other", [ ("command", mkInj command) ])
                  ]
 instance Interpret Repository
 instance ToDhall Repository where

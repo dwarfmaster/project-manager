@@ -1,5 +1,5 @@
-{ mkDerivation, base, containers, dhall, prettyprinter, relude
-, stdenv, template-haskell
+{ mkDerivation, base, containers, dhall, directory, filepath
+, prettyprinter, relude, stdenv, template-haskell, text
 }:
 mkDerivation {
   pname = "project-manager";
@@ -8,7 +8,8 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    base containers dhall prettyprinter relude template-haskell
+    base containers dhall directory filepath prettyprinter relude
+    template-haskell text
   ];
   description = "Helper software to manage my projects descriptions";
   license = stdenv.lib.licenses.mit;
