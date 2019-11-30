@@ -98,6 +98,7 @@ executable hsdhall
                      , directory == 1.3.*
                      , filepath == 1.4.*
                      , text == 1.2.3.*
+                     , optparse-applicative == 0.14.*
 
   -- Directories containing source files.
   hs-source-dirs:      src
