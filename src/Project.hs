@@ -24,6 +24,9 @@ instance ToDhall a => ToDhall [a] where
     dhallType _ = App List $ dhallType (Proxy @a)
     toDhall [] = ListLit (Just $ dhallType (Proxy @a)) []
     toDhall ls = ListLit Nothing $ fromList $ fmap toDhall ls
+instance ToDhall Bool where
+    dhallType _ = Bool
+    toDhall = BoolLit
 
 data Injection a = Inj (a -> Expr Void Void) (Expr Void Void)
 mkInj :: forall a b. ToDhall b => (a -> b) -> Injection a
@@ -39,22 +42,33 @@ convertUnionType fields field union =
              (convertRecordType (fromMaybe [] $ Mp.lookup field fields) union)
              (makeRecordType <$> Mp.delete field fields)
 
-data Repository = Git { url :: Text, user :: Text, name :: Text }
-                | Other { command :: Text }
+data Remote = Git { url :: Text, user :: Text, name :: Text }
+            | Other { command :: Text }
+            deriving (Generic,Show)
+injectRemote :: Mp.Map Text [(Text, Injection Remote)]
+injectRemote = Mp.fromList
+             [ ("Git", [ ("url",  mkInj url)
+                       , ("user", mkInj user)
+                       , ("name", mkInj (name :: Remote -> Text))
+                       ])
+             , ("Other", [ ("command", mkInj command) ])
+             ]
+instance Interpret Remote
+instance ToDhall Remote where
+    dhallType _ = Union $ fmap makeRecordType injectRemote
+    toDhall git@Git{}   = convertUnionType injectRemote "Git"   git
+    toDhall oth@Other{} = convertUnionType injectRemote "Other" oth
+
+data Repository = Repo { directory :: Text, remote :: Remote }
                 deriving (Generic,Show)
-injectRepository :: Mp.Map Text [(Text, Injection Repository)]
-injectRepository = Mp.fromList
-                 [ ("Git", [ ("url",  mkInj url)
-                           , ("user", mkInj user)
-                           , ("name", mkInj (name :: Repository -> Text))
-                           ])
-                 , ("Other", [ ("command", mkInj command) ])
-                 ]
+injectRepository :: [(Text, Injection Repository)]
+injectRepository = [ ("directory", mkInj (directory :: Repository -> Text))
+                   , ("remote",    mkInj remote)
+                   ]
 instance Interpret Repository
 instance ToDhall Repository where
-    dhallType _ = Union $ fmap makeRecordType injectRepository
-    toDhall git@Git{}   = convertUnionType injectRepository "Git"   git
-    toDhall oth@Other{} = convertUnionType injectRepository "Other" oth
+    dhallType _ = Record $ fromList $ fmap (\(name,Inj _ tp) -> (name,tp)) injectRepository
+    toDhall = convertRecordType injectRepository 
 
 data Project = Project
              { name        :: Text
@@ -62,6 +76,7 @@ data Project = Project
              , directory   :: Text
              , repos       :: [Repository]
              , wiki        :: Text
+             , active      :: Bool
              } deriving (Generic,Show)
 injectProject :: [(Text, Injection Project)]
 injectProject = [ ("name",        mkInj (name :: Project -> Text))
@@ -69,6 +84,7 @@ injectProject = [ ("name",        mkInj (name :: Project -> Text))
                 , ("directory",   mkInj (directory :: Project -> Text))
                 , ("repos",       mkInj repos)
                 , ("wiki",        mkInj wiki)
+                , ("active",      mkInj active)
                 ]
 instance Interpret Project
 instance ToDhall Project where
