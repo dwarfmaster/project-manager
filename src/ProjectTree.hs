@@ -41,6 +41,7 @@ readProjectTreeRec path = do
 
 writeProjectTree :: FilePath -> ProjectTree -> IO ()
 writeProjectTree path ptree = do
+    removeDirectory path
     let fullpath = path <> "/root"
     createDirectoryIfMissing True fullpath
     withCurrentDirectory fullpath $ writeProjectTreeRec ptree
@@ -63,6 +64,12 @@ listProjectsName = foldProjectTree $ return . (name :: Project -> Text)
 splitProjectName :: Text -> [Text]
 splitProjectName = T.splitOn "."
 
+onBranch :: forall f a. Alternative f => (ProjectTree -> f a) -> ProjectTree -> Text -> f a
+onBranch action ptree name = onBranch' (splitProjectName name) ptree
+ where onBranch' :: [Text] -> ProjectTree -> f a
+       onBranch' []       pt               = action pt
+       onBranch' (nm:nms) (PTree _ childs) = maybe empty (onBranch' nms) $ Mp.lookup nm childs
+
 onProject :: forall f a. Alternative f => (Project -> f a) -> ProjectTree -> Text -> f a
 onProject action ptree name = onProject' (splitProjectName name) ptree
  where onProject' :: [Text] -> ProjectTree -> f a
@@ -76,4 +83,26 @@ hasProject ptree name = maybe False id $ onProject (const $ Just True) ptree nam
 projectMap :: (Project -> Project) -> ProjectTree -> ProjectTree
 projectMap action (PTree projs childs) = PTree (fmap action projs) $ fmap (projectMap action) childs
 
+addProject :: Project -> ProjectTree -> ProjectTree
+addProject pr = addProject' (splitProjectName $ (name :: Project -> Text) pr) pr
+ where addProject' :: [Text] -> Project -> ProjectTree -> ProjectTree
+       addProject' []         _  _                    = error "Trying to add a project without a name"
+       addProject' [name]     pr (PTree projs childs) = PTree (Mp.insert name pr projs) childs
+       addProject' (name:nms) pr (PTree projs childs) =
+           let pt = Mp.findWithDefault (PTree Mp.empty Mp.empty) name childs
+            in PTree projs $ Mp.insert name (addProject' nms pr pt) childs
+
+-- It wont recursively delete a subtree
+delProject :: Text -> ProjectTree -> ProjectTree
+delProject name = delProject' $ splitProjectName name
+ where delProject' :: [Text] -> ProjectTree -> ProjectTree
+       delProject' []         pt = pt
+       delProject' [name]     (PTree projs childs) = PTree (Mp.delete name projs) childs
+       delProject' (name:nms) (PTree projs childs) =
+           case Mp.lookup name childs of
+             Nothing -> PTree projs childs
+             Just pt -> let npt = delProject' nms pt
+                         in if Mp.null (projects npt) && Mp.null (children npt)
+                               then PTree projs $ Mp.delete name childs
+                               else PTree projs $ Mp.insert name npt childs
 
