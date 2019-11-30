@@ -41,7 +41,7 @@ readProjectTreeRec path = do
 
 writeProjectTree :: FilePath -> ProjectTree -> IO ()
 writeProjectTree path ptree = do
-    removeDirectory path
+    removeDirectoryRecursive path
     let fullpath = path <> "/root"
     createDirectoryIfMissing True fullpath
     withCurrentDirectory fullpath $ writeProjectTreeRec ptree
