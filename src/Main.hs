@@ -119,7 +119,7 @@ execAction (Set setter) rc act proj ptree =
  where actSetter :: Project -> Project
        actSetter pr = if not act || Pr.active pr then setter pr else pr
 
-execAction (Repo repoA) rc act proj ptree = execRepoAction repoA rc act proj ptree
+execAction (Repo repoA) rc act proj ptree = getCurrentDirectory >>= execRepoAction repoA rc act proj ptree
 
 execAction Activate rc act proj ptree =
     if not rc && not (isSimpleProject proj ptree)
@@ -145,8 +145,44 @@ execAction Deactivate rc act proj ptree =
        setter :: Project -> Project
        setter pr = pr { Pr.active = False }
 
-execRepoAction :: RepoAction -> Bool -> Bool -> Text -> ProjectTree -> IO ProjectTree
-execRepoAction = undefined
+execRepoAction :: RepoAction -> Bool -> Bool -> Text -> ProjectTree -> FilePath -> IO ProjectTree
+execRepoAction (RAddGit remote) rc act proj ptree thisDir =
+    if not (hasProject proj ptree)
+       then putTextLn (proj <> " is not a project") >> return ptree
+       else return $ fst $ execOnOneProject (raised &&& const Nothing) ptree proj
+ where raised :: Project -> Maybe Project
+       raised proj = return $ proj { Pr.repos = updater (Pr.repos proj) }
+       updater :: [Repository] -> [Repository]
+       updater = (:) (Pr.Repo (fromString thisDir) $ Pr.Git remote)
+
+execRepoAction (RAddOther command) rc act proj ptree thisDir =
+    if not (hasProject proj ptree)
+       then putTextLn (proj <> " is not a project") >> return ptree
+       else return $ fst $ execOnOneProject (raised &&& const Nothing) ptree proj
+ where raised :: Project -> Maybe Project
+       raised proj = return $ proj { Pr.repos = updater (Pr.repos proj) }
+       updater :: [Repository] -> [Repository]
+       updater = (:) (Pr.Repo (fromString thisDir) $ Pr.Other command)
+
+execRepoAction RRemove rc act proj ptree thisDir =
+    if not (hasProject proj ptree)
+       then putTextLn (proj <> " is not a project") >> return ptree
+       else return $ fst $ execOnOneProject (raised &&& const Nothing) ptree proj
+ where raised :: Project -> Maybe Project
+       raised proj = return $ proj { Pr.repos = updater (Pr.repos proj) }
+       updater :: [Repository] -> [Repository]
+       updater = filter $ \(Pr.Repo path _) -> path /= fromString thisDir
+
+execRepoAction RList rc act proj ptree thisDir =
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then mapM_ (putTextLn . show) 
+                          (snd $ execOnOneProject (Just &&& Pr.repos) ptree proj)
+                 >> return ptree
+               else putTextLn ("Project " <> proj <> " has subprojects, use -u to deactivate all of them")
+                 >> return ptree
+       else mapM_ (putTextLn . show) (snd $ onSubTree (id &&& foldProjectTree Pr.repos) ptree proj)
+         >> return ptree
 
 
 --    ___        _   _               ____                          

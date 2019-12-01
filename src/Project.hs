@@ -1,5 +1,5 @@
 
-module Project (Repository(..), Project(..), readProject, writeProject) where
+module Project (Remote(..), Repository(..), Project(..), readProject, writeProject) where
 
 import           Prelude ()
 import           Relude
@@ -42,15 +42,12 @@ convertUnionType fields field union =
              (convertRecordType (fromMaybe [] $ Mp.lookup field fields) union)
              (makeRecordType <$> Mp.delete field fields)
 
-data Remote = Git { url :: Text, user :: Text, name :: Text }
+data Remote = Git { url :: Text }
             | Other { command :: Text }
             deriving (Generic,Show)
 injectRemote :: Mp.Map Text [(Text, Injection Remote)]
 injectRemote = Mp.fromList
-             [ ("Git", [ ("url",  mkInj url)
-                       , ("user", mkInj user)
-                       , ("name", mkInj (name :: Remote -> Text))
-                       ])
+             [ ("Git", [ ("url",  mkInj url) ])
              , ("Other", [ ("command", mkInj command) ])
              ]
 instance Interpret Remote
