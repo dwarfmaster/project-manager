@@ -8,101 +8,105 @@ import           System.Directory
 import           System.FilePath.Posix
 import qualified Data.Map              as Mp
 import qualified Data.Text             as T
+import qualified Data.Set              as St
 
-data ProjectTree = PTree
-                 { projects :: Map Text Project
-                 , children :: Map Text ProjectTree
-                 } deriving (Show)
+data ProjectTree = PTree (Maybe Project)        -- The root project
+                         (Map Text ProjectTree) -- The subprojects
+                         deriving (Show)
+instance Semigroup ProjectTree where
+    (PTree p1 c1) <> (PTree p2 c2) = PTree (p1 <|> p2) $ Mp.unionWith (<>) c1 c2
+instance Monoid ProjectTree where
+    mempty = emptyTree 
 
-foldProjectTree :: forall m. Monoid m => (Project -> m) -> ProjectTree -> m
-foldProjectTree = foldProjectTreeRec
- where foldProjectTreeRec :: (Project -> m) -> ProjectTree -> m 
-       foldProjectTreeRec f (PTree projs childs) =
-           foldMap f projs <> foldMap (foldProjectTreeRec f) childs
+emptyTree :: ProjectTree
+emptyTree = PTree Nothing Mp.empty
 
 readProjectTree :: FilePath -> IO ProjectTree
 readProjectTree path = do
     createDirectoryIfMissing True path
-    withCurrentDirectory path $ readProjectTreeRec "./root"
+    withCurrentDirectory path $ readProjectTreeRoot "./root"
 
-readProjectTreeRec :: FilePath -> IO ProjectTree
-readProjectTreeRec path = do
+readProjectTreeRoot :: FilePath -> IO ProjectTree
+readProjectTreeRoot path = do
+    let dhallFile = path <> ".dhall"
+    project <- ifM (not <$> doesFileExist dhallFile) (return Nothing) $ Just <$> readProject dhallFile
+    childs  <- readProjectTreeChildren path
+    return $ PTree project childs
+
+readProjectTreeChildren :: FilePath -> IO (Map Text ProjectTree)
+readProjectTreeChildren path =
     let fullpath = path <> "/"
-    contents <- listDirectory path
-    children <- filterM (doesDirectoryExist . (fullpath <>)) contents
-    projects <- filterM (doesFileExist      . (fullpath <>)) contents
-    PTree <$> (fromList <$> mapM (prepProj  fullpath) projects)
-          <*> (fromList <$> mapM (prepChild fullpath) children)
- where prepProj :: FilePath -> FilePath -> IO (Text,Project)
-       prepProj root path = (fromString $ dropExtension path,)
-                        <$> readProject (root <> path)
-       prepChild :: FilePath -> FilePath -> IO (Text,ProjectTree)
-       prepChild root path = (fromString path,) <$> readProjectTreeRec (root <> path)
+     in doesDirectoryExist fullpath >>= \exists ->
+         if not exists
+           then return Mp.empty
+           else do
+               let fullpath = path <> "/"
+               content  <- listDirectory path
+               children <-                       filterM (doesDirectoryExist . (fullpath <>)) content
+               projects <- map dropExtension <$> filterM (doesFileExist      . (fullpath <>)) content
+               let set = St.union (fromList children) (fromList projects)
+               let all = St.toList set
+               childs <- forM all $ \fl -> (fromString fl,) <$> readProjectTreeRoot (fullpath <> fl)
+               return $ Mp.fromList childs
 
 writeProjectTree :: FilePath -> ProjectTree -> IO ()
 writeProjectTree path ptree = do
     removeDirectoryRecursive path
     let fullpath = path <> "/root"
     createDirectoryIfMissing True fullpath
-    withCurrentDirectory fullpath $ writeProjectTreeRec ptree
+    withCurrentDirectory path $ writeProjectTreeRec "root" ptree
 
-writeProjectTreeRec :: ProjectTree -> IO ()
-writeProjectTreeRec (PTree projs childs) = do
-    let projlst = Mp.toList projs
-    let childlst = Mp.toList childs
-    forM_ projlst $ \(k,proj) -> writeProject (toString k <> ".dhall") proj
-    forM_ childlst $ \(k,child) -> writeProjectTreeRec' (toString k) child
+writeProjectTreeRec :: Text -> ProjectTree -> IO ()
+writeProjectTreeRec name (PTree proj childs) = do
+    maybe (return ()) (writeProject (toString name <> ".dhall")) proj
+    if Mp.null childs
+       then return ()
+       else do createDirectoryIfMissing True (toString name)
+               let childlst = Mp.toList childs
+               forM_ childlst $ \(subname',child) ->
+                   let subname = toString subname'
+                    in withCurrentDirectory (toString name) $ writeProjectTreeRec subname' child
 
-writeProjectTreeRec' :: FilePath -> ProjectTree -> IO ()
-writeProjectTreeRec' path ptree = do
-    createDirectoryIfMissing True path
-    withCurrentDirectory path $ writeProjectTreeRec ptree
-
-listProjectsName :: ProjectTree -> [Text]
-listProjectsName = foldProjectTree $ return . (name :: Project -> Text)
+foldProjectTree :: forall m. Monoid m => (Project -> m) -> ProjectTree -> m
+foldProjectTree f (PTree proj childs) = maybe mempty f proj <> foldMap (foldProjectTree f) childs
 
 splitProjectName :: Text -> [Text]
-splitProjectName = T.splitOn "."
+splitProjectName txt = if txt == "." then [] else T.splitOn "." txt
 
-onBranch :: forall f a. Alternative f => (ProjectTree -> f a) -> ProjectTree -> Text -> f a
-onBranch action ptree name = onBranch' (splitProjectName name) ptree
- where onBranch' :: [Text] -> ProjectTree -> f a
-       onBranch' []       pt               = action pt
-       onBranch' (nm:nms) (PTree _ childs) = maybe empty (onBranch' nms) $ Mp.lookup nm childs
+nullProject :: ProjectTree -> Bool
+nullProject (PTree (Just _) _)      = False
+nullProject (PTree Nothing  childs) = all nullProject childs
 
-onProject :: forall f a. Alternative f => (Project -> f a) -> ProjectTree -> Text -> f a
-onProject action ptree name = onProject' (splitProjectName name) ptree
- where onProject' :: [Text] -> ProjectTree -> f a
-       onProject' []     (PTree projs childs) = empty
-       onProject' [p]    (PTree projs childs) = maybe empty action $ Mp.lookup p projs
-       onProject' (p:ps) (PTree projs childs) = maybe empty (onProject' ps) $ Mp.lookup p childs
-
-hasProject :: ProjectTree -> Text -> Bool
-hasProject ptree name = maybe False id $ onProject (const $ Just True) ptree name
+onSubTree :: forall f a. Alternative f
+          => (ProjectTree -> (ProjectTree,f a))
+          -> ProjectTree -> Text
+          -> (ProjectTree,f a)
+onSubTree action ptree name = onSubTreeRec ptree $ splitProjectName name
+ where onSubTreeRec :: ProjectTree -> [Text] -> (ProjectTree, f a)
+       onSubTreeRec pt                  []       = action pt
+       onSubTreeRec pt@(PTree p childs) (nm:nms) =
+           case Mp.lookup nm childs of
+             Nothing  -> (pt,empty)
+             Just spt -> let (npt,result) = onSubTreeRec spt nms
+                          in if nullProject npt
+                                then (PTree p $ Mp.delete nm     childs, result)
+                                else (PTree p $ Mp.insert nm npt childs, result)
 
 projectMap :: (Project -> Project) -> ProjectTree -> ProjectTree
-projectMap action (PTree projs childs) = PTree (fmap action projs) $ fmap (projectMap action) childs
+projectMap action (PTree proj childs) =
+    PTree (action <$> proj)
+        $ Mp.map (projectMap action) childs
 
+-- It will replace an evenrtually existing project
 addProject :: Project -> ProjectTree -> ProjectTree
 addProject pr = addProject' (splitProjectName $ (name :: Project -> Text) pr) pr
  where addProject' :: [Text] -> Project -> ProjectTree -> ProjectTree
-       addProject' []         _  _                    = error "Trying to add a project without a name"
-       addProject' [name]     pr (PTree projs childs) = PTree (Mp.insert name pr projs) childs
-       addProject' (name:nms) pr (PTree projs childs) =
-           let pt = Mp.findWithDefault (PTree Mp.empty Mp.empty) name childs
-            in PTree projs $ Mp.insert name (addProject' nms pr pt) childs
+       addProject' []         pr (PTree _    childs) = PTree (Just pr) childs
+       addProject' (name:nms) pr (PTree proj childs) =
+           let pt = Mp.findWithDefault emptyTree name childs
+            in PTree proj $ Mp.insert name (addProject' nms pr pt) childs
 
--- It wont recursively delete a subtree
+-- It will recursively delete a subtree
 delProject :: Text -> ProjectTree -> ProjectTree
-delProject name = delProject' $ splitProjectName name
- where delProject' :: [Text] -> ProjectTree -> ProjectTree
-       delProject' []         pt = pt
-       delProject' [name]     (PTree projs childs) = PTree (Mp.delete name projs) childs
-       delProject' (name:nms) (PTree projs childs) =
-           case Mp.lookup name childs of
-             Nothing -> PTree projs childs
-             Just pt -> let npt = delProject' nms pt
-                         in if Mp.null (projects npt) && Mp.null (children npt)
-                               then PTree projs $ Mp.delete name childs
-                               else PTree projs $ Mp.insert name npt childs
+delProject name ptree = fst $ onSubTree (const (emptyTree,Just ())) ptree name
 
