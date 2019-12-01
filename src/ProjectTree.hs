@@ -110,3 +110,23 @@ addProject pr = addProject' (splitProjectName $ (name :: Project -> Text) pr) pr
 delProject :: Text -> ProjectTree -> ProjectTree
 delProject name ptree = fst $ onSubTree (const (emptyTree,Just ())) ptree name
 
+predProjectTree :: (ProjectTree -> Bool) -> Text -> ProjectTree -> Bool
+predProjectTree pred name ptree = maybe False id $ snd
+                                $ onSubTree (id &&& return . pred) ptree name
+
+hasProject :: Text -> ProjectTree -> Bool
+hasProject = predProjectTree $ \(PTree proj _) -> isJust proj
+
+isSimpleProject :: Text -> ProjectTree -> Bool
+isSimpleProject = predProjectTree $ \(PTree _ childs) -> Mp.null childs
+
+execOnOneProject :: forall f a. Alternative f
+                 => (Project -> (Maybe Project,f a))
+                 -> ProjectTree -> Text
+                 -> (ProjectTree, f a)
+execOnOneProject action = onSubTree action'
+ where action' :: ProjectTree -> (ProjectTree, f a)
+       action' (PTree Nothing     childs) = (PTree Nothing childs, empty)
+       action' (PTree (Just proj) childs) = let (nproj,result) = action proj
+                                             in (PTree nproj childs, result)
+
