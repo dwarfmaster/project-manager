@@ -6,6 +6,7 @@ import qualified Project             as Pr
 import           ProjectTree
 import           Options.Applicative
 import qualified System.Environment  as Env
+import           System.Directory
 
 -- A repo action is assumed to be executed at the root of the repo
 data RepoAction = RAddGit Text   -- the remote
@@ -60,13 +61,100 @@ mkOptions opts@(Options _ _ root _ _) = if root /= "" then return opts else do
     return $ opts { ptroot = fromString nroot }
 
 main :: IO ()
-main = putStrLn . show =<< mkOptions =<< execParser cliOpt
+main = execOptions =<< mkOptions =<< execParser cliOpt
  where cliOpt :: ParserInfo Options
        cliOpt = info cliOptions ( fullDesc
                                <> progDesc "Manage a set of projects and their properties"
                                <> header "projects -- a project manager"
                                 )
 
+execOptions :: Options -> IO ()
+execOptions (Options projName action ptroot uall active) = do
+    ptree <- readProjectTree $ toString ptroot
+    result <- execAction action uall active projName ptree
+    writeProjectTree (toString ptroot) result
+
+execAction :: Action -> Bool -> Bool -> Text -> ProjectTree -> IO ProjectTree
+execAction List _ act proj ptree = mapM_ putTextLn names >> return ptree 
+ where names :: [Text]
+       names = snd $ onSubTree (id &&& foldProjectTree getName) ptree proj
+       getName :: Project -> [Text]
+       getName pr = if not act || Pr.active pr then return $ Pr.name pr
+                                               else []
+
+execAction (Add wiki desc mdir) _ _ proj ptree = 
+    if hasProject proj ptree
+       then putTextLn ("Project " <> proj <> " already exists") >> return ptree
+       else do dir <- fromString <$> maybe getCurrentDirectory (return . toString) mdir
+               let project = Pr.Project proj desc dir [] wiki False
+               return $ addProject project ptree
+
+execAction Remove rc act proj ptree =
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then return $ fst $ execOnOneProject (const (Nothing,Nothing)) ptree proj
+               else putTextLn ("Won't recursively remove project " <> proj) >> return ptree
+       else return $ delProject proj ptree
+
+execAction (Get getter) rc act proj ptree = do
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then putTextLn (maybe "" id $ snd $ execOnOneProject (Just &&& Just . getter) ptree proj)
+               else putTextLn ("Project " <> proj <> " has subprojects, use -u to get from all of them")
+       else mapM_ putTextLn fields
+    return ptree
+ where actGetter :: Project -> [Text]
+       actGetter pr = if not act || Pr.active pr then return $ getter pr
+                                                 else []
+       fields :: [Text]
+       fields = snd $ onSubTree (id &&& foldProjectTree actGetter) ptree proj
+
+execAction (Set setter) rc act proj ptree =
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then return $ fst $ execOnOneProject (Just . setter &&& const Nothing) ptree proj
+               else putTextLn ("Project " <> proj <> " has subprojects, use -u to set to all of them")
+                 >> return ptree
+       else return $ fst $ onSubTree (projectMap actSetter &&& const Nothing) ptree proj
+ where actSetter :: Project -> Project
+       actSetter pr = if not act || Pr.active pr then setter pr else pr
+
+execAction (Repo repoA) rc act proj ptree = execRepoAction repoA rc act proj ptree
+
+execAction Activate rc act proj ptree =
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then return $ fst $ execOnOneProject (Just . setter &&& const Nothing) ptree proj
+               else putTextLn ("Project " <> proj <> " has subprojects, use -u to activate all of them")
+                 >> return ptree
+       else return $ fst $ onSubTree (projectMap actSetter &&& const Nothing) ptree proj
+ where actSetter :: Project -> Project
+       actSetter pr = if not act || Pr.active pr then setter pr else pr
+       setter :: Project -> Project
+       setter pr = pr { Pr.active = True }
+
+execAction Deactivate rc act proj ptree =
+    if not rc && not (isSimpleProject proj ptree)
+       then if hasProject proj ptree
+               then return $ fst $ execOnOneProject (Just . setter &&& const Nothing) ptree proj
+               else putTextLn ("Project " <> proj <> " has subprojects, use -u to deactivate all of them")
+                 >> return ptree
+       else return $ fst $ onSubTree (projectMap actSetter &&& const Nothing) ptree proj
+ where actSetter :: Project -> Project
+       actSetter pr = if not act || Pr.active pr then setter pr else pr
+       setter :: Project -> Project
+       setter pr = pr { Pr.active = False }
+
+execRepoAction :: RepoAction -> Bool -> Bool -> Text -> ProjectTree -> IO ProjectTree
+execRepoAction = undefined
+
+
+--    ___        _   _               ____                          
+--   / _ \ _ __ | |_(_) ___  _ __   |  _ \ __ _ _ __ ___  ___ _ __ 
+--  | | | | '_ \| __| |/ _ \| '_ \  | |_) / _` | '__/ __|/ _ \ '__|
+--  | |_| | |_) | |_| | (_) | | | | |  __/ (_| | |  \__ \  __/ |   
+--   \___/| .__/ \__|_|\___/|_| |_| |_|   \__,_|_|  |___/\___|_|   
+--        |_|                                                      
 cliOptions :: Parser Options
 cliOptions = Options
          <$> argument str (metavar "project")
@@ -111,13 +199,15 @@ removeOptions = pure Remove
 
 getOptions :: Parser Action
 getOptions = subparser
-           $ command "name"        (info (fromGetter Pr.name)        $ progDesc "Get project name")
-          <> command "description" (info (fromGetter Pr.description) $ progDesc "Get project description")
-          <> command "directory"   (info (fromGetter Pr.directory)   $ progDesc "Get project directory")
-          <> command "wiki"        (info (fromGetter Pr.wiki)        $ progDesc "Get project wiki")
-          <> command "activated"   (info (fromGetter Pr.active)      $ progDesc "Is project active")
+           $ command "name"        (info (fromTGetter Pr.name)        $ progDesc "Get project name")
+          <> command "description" (info (fromTGetter Pr.description) $ progDesc "Get project description")
+          <> command "directory"   (info (fromTGetter Pr.directory)   $ progDesc "Get project directory")
+          <> command "wiki"        (info (fromTGetter Pr.wiki)        $ progDesc "Get project wiki")
+          <> command "activated"   (info (fromGetter  Pr.active)      $ progDesc "Is project active")
  where fromGetter :: Show a => (Project -> a) -> Parser Action
        fromGetter getter = pure $ Get $ show . getter
+       fromTGetter :: (Project -> Text) -> Parser Action
+       fromTGetter getter = pure $ Get getter
 
 setOptions :: Parser Action
 setOptions = subparser
