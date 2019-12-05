@@ -12,7 +12,7 @@ name:                project-manager
 -- PVP summary:      +------- breaking API changes
 --                   | +----- non-breaking API additions
 --                   | | +--- code changes with no API change
-version:             0.0.1
+version:             1.0.0
 
 -- A short (one-line) description of the package.
 synopsis:            Helper software to manage my projects descriptions
@@ -43,12 +43,12 @@ maintainer:          luc@dwarfmaster.net
 
 -- Extra files to be distributed with the package, such as examples or a
 -- README.
-extra-source-files:  CHANGELOG.md, README.md
+extra-source-files:  README.md
 
 build-type:          Simple
 
 
-executable hsdhall
+executable pm
   -- .hs or .lhs file containing the Main module.
   main-is:             Main.hs
 
