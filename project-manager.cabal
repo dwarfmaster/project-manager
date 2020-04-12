@@ -90,8 +90,8 @@ executable pm
 
   -- Other library packages from which modules are imported.
   build-depends:       base ==4.12.*
-                     , relude ==0.4.*
-                     , dhall == 1.19.*
+                     , relude ==0.5.*
+                     , dhall == 1.24.*
                      , template-haskell == 2.14.*
                      , containers == 0.6.*
                      , prettyprinter == 1.2.*

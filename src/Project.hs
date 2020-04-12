@@ -32,8 +32,8 @@ data Injection a = Inj (a -> Expr Void Void) (Expr Void Void)
 mkInj :: forall a b. ToDhall b => (a -> b) -> Injection a
 mkInj f = Inj (toDhall . f) $ dhallType $ Proxy @b
 
-makeRecordType :: [(Text, Injection a)] -> Expr Void Void
-makeRecordType = Record . fromList . fmap (\(name,Inj _ tp) -> (name,tp))
+makeRecordType :: [(Text, Injection a)] -> Maybe (Expr Void Void)
+makeRecordType = Just . Record . fromList . fmap (\(name,Inj _ tp) -> (name,tp))
 convertRecordType :: [(Text, Injection a)] -> a -> Expr Void Void
 convertRecordType fields record = RecordLit $ fromList $ fmap (\(name,Inj i _) -> (name, i record)) fields
 convertUnionType :: Mp.Map Text [(Text, Injection a)] -> Text -> a -> Expr Void Void
